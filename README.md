@@ -121,8 +121,6 @@ diff GCA.md5 GCA.check.md5
 
 ```shell
 awk -F'[/.]' '{print "mv "$3".fna "$3"_"$4".fna"}' ../ncbi/md5sum.exists.txt | bash
-
-#awk -F'[/.]' '{print "mv "$3".fna "$3"_"$4".fna"}' ../ncbi/md5sum.exists.txt | bash
 ```
 
 
