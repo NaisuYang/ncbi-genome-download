@@ -71,19 +71,19 @@ mv ncbi/ncbi_dataset/fetch.txt ncbi/ncbi_dataset/fetch.backup.txt
 mv ncbi/ncbi_dataset/fetch.filters.txt  ncbi/ncbi_dataset/fetch.txt
 sed -i 's/data\/GCA_[^/]*\//data\//g' ncbi/ncbi_dataset/fetch.txt
 datasets rehydrate --gzip --directory ncbi
+#将下载好的基因组移动到GCA-updates
+mkdir GCA-updates
+mv ncbi/ncbi_dataset/data/*.fna GCA-updates/
+ls GCA-updates/* | awk -F'[_.]' '{print "mv "$0" "$1"_"$2"_"$3".fna"}' > rename.sh
 ```
 
 ### 下载失败处理
 
 ```shell
 #解压数据后，解压失败的重新下载
-ls ncbi_dataset/data/*.gz | cut -d "/" -f3 | cut -d "." -f1 | grep -f /dev/stdin ncbi_dataset/tmp.txt
+ls ncbi/ncbi_dataset/data/*.gz | cut -d "/" -f3 | cut -d "." -f1 | grep -f /dev/stdin ncbi_dataset/tmp.txt
 mv ncbi_dataset/tmp.txt ncbi_dataset/fetch.txt
 datasets rehydrate --gzip --directory ncbi
-```
-
-```shell
-seqkit fx2tab -l -n -i GCA/GCA_000001635.fna > GCA_000001635.fna.len
 ```
 
 ### 删除过时的基因组
@@ -94,18 +94,33 @@ mkdir deprecated
 #将fna文件移动到deprecated文件夹
 awk '{print $2}' GCA.deprecated.md5 | xargs -I {} mv {} deprecated
 awk -F'[ .]' '{print $3"*"}' GCA.deprecated.md5 | xargs -I {} sh -c 'rm -rf {}'
+
+#除了fna文件外，删除所有文件
+find GCA -type f ! -name "*.fna" -exec rm -fv {} \;
 ```
 
-### 处理基因组版本v1和v2同时存在的情况
+### 下载的基因组进行md5校验
 
 ```shell
-cat GCA.md5 GCA-update1.md5 | awk -F'[./]' '{print $2}' | sort | uniq -c | awk '$1 != 1'
+md5sum * > ../GCA-updates.md5
+#比较md5值是否一致
+#新的GCA.md5应该是GCA.exists.md5和ncbi/md5sum.updates.awk.txt合并
+awk -F'[ ./_]' '{print $1,$6"_"$7"_"$8".fna"}' ncbi/md5sum.updates.txt > ncbi/md5sum.updates.awk.txt
+cat GCA.exists.md5 ncbi/md5sum.updates.awk.txt | sort | uniq > GCA.md5
+
+#实际校验的md5值应该为GCA.exists.md5和GCA-updates.md5合并
+cat GCA.exists.md5 GCA-updates.md5 | sort | uniq > GCA.check.md5
+
+#判断GCA.md5和GCA.check.md5内容是否一致
+diff GCA.md5 GCA.check.md5
 ```
+
+
 
 ### 文件重命名
 
 ```shell
-ls GCA-update/* | awk -F'[_.]' '{print "mv "$0" "$1"_"$2"_"$3".fna"}' > rename.sh
+awk -F'[/.]' '{print "mv "$3".fna "$3"_"$4".fna"}' ../ncbi/md5sum.exists.txt | bash
 
 #awk -F'[/.]' '{print "mv "$3".fna "$3"_"$4".fna"}' ../ncbi/md5sum.exists.txt | bash
 ```
@@ -114,6 +129,8 @@ ls GCA-update/* | awk -F'[_.]' '{print "mv "$0" "$1"_"$2"_"$3".fna"}' > rename.s
 
 ```shell
 mv ncbi/ncbi_dataset/data/*.fna GCA-update/
+
+awk -F'[ /._]' '{print $1"  "$4"_"$5"_"$6".fna"}' GCA-update1.md5
 awk -F'[ /]' '{print $1,$6}' ncbi/md5sum.update.txt > GCA-update.md5
 ```
 
