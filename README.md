@@ -50,8 +50,6 @@ Original: 798
 Deprecated: 352
 Updates: 1045
 Now：1491
-
-
 ```
 
 ## 1. NCBI基因组下载
@@ -61,7 +59,7 @@ Now：1491
 ### 获取name2id
 
 ```shell
-datasets summary genome taxon 'fungi' --reference --as-json-lines | dataformat tsv genome --fields assminfo-paired-assm-accession,current-accession,organism-name | sed -e 's/^[[:space:]]*//' -e 's/GCF_[^[:space:]]*[[:space:]]*//g' | awk 'BEGIN {FS=OFS="\t"} NR==1 {print "Name\tGCA"; next} ($1 ~ /^GCA/) {gsub(" ", "_", $2); print $2 "\t" $1}' > name2id.txt
+datasets summary genome taxon 'fungi' --reference --as-json-lines | dataformat tsv genome --fields assminfo-paired-assm-accession,current-accession,organism-name | sed -e 's/^[[:space:]]*//' -e 's/GCF_[^[:space:]]*[[:space:]]*//g' | awk 'BEGIN {FS=OFS="\t"} NR==1 {print "Name\tGCA"; next} ($1 ~ /^GCA/) {gsub("\.", "_", $1);gsub(" ", "_", $2); print $2 "\t" $1}' > name2id.txt
 ```
 
 ### 提取GCA accession
@@ -73,10 +71,13 @@ awk -F'\t' 'NR > 1 {print $2}' name2id.txt > gca_accession.txt
 ### 下载基因组
 
 ```shell
+#获取基因组地址和MD5值
 datasets download genome accession --inputfile gca_accession.txt --dehydrated --filename ncbi.zip
+#解压到ncbi目录
 unzip -d ncbi ncbi.zip
 #下载基因组存放在data目录，不需要再建子目录
 sed -i 's/data\/GCA_[^/]*\//data\//g' ncbi/ncbi_dataset/fetch.txt
+#下载基因组
 datasets rehydrate --gzip --directory ncbi
 ```
 
@@ -93,7 +94,7 @@ md5sum *.fna > ../GCA.md5
 ### 获取最新基因组数据
 
 ```shell
-datasets summary genome taxon 'fungi' --reference --as-json-lines | dataformat tsv genome --fields assminfo-paired-assm-accession,current-accession,organism-name | sed -e 's/^[[:space:]]*//' -e 's/GCF_[^[:space:]]*[[:space:]]*//g' | awk 'BEGIN {FS=OFS="\t"} NR==1 {print "Name\tGCA"; next} ($1 ~ /^GCA/) {gsub(" ", "_", $2); print $2 "\t" $1}' > name2id.txt
+datasets summary genome taxon 'fungi' --reference --as-json-lines | dataformat tsv genome --fields assminfo-paired-assm-accession,current-accession,organism-name | sed -e 's/^[[:space:]]*//' -e 's/GCF_[^[:space:]]*[[:space:]]*//g' | awk 'BEGIN {FS=OFS="\t"} NR==1 {print "Name\tGCA"; next} ($1 ~ /^GCA/) {gsub("\.", "_", $1);gsub(" ", "_", $2); print $2 "\t" $1}' > name2id.txt
 awk -F'\t' 'NR > 1 {print $2}' name2id.txt > gca_accession.txt
 datasets download genome accession --inputfile gca_accession.txt --dehydrated --filename ncbi.zip
 unzip -d ncbi ncbi.zip
@@ -136,8 +137,10 @@ mv ncbi/ncbi_dataset/data/*.fna GCA-updates/
 ls GCA-updates/* | awk -F'[_.]' '{print "mv "$0" "$1"_"$2"_"$3".fna"}' > rename.sh
 column -t rename.sh  | less -S
 bash rename.sh
-#
+#获取未下载的基因组信息
 ls GCA-updates/ | cut -d "/" -f4 | cut -d "_" -f1,2 | grep -vf /dev/stdin ncbi/ncbi_dataset/fetch.txt > ncbi/ncbi_dataset/tmp.txt
+mv ncbi/ncbi_dataset/tmp.txt ncbi/ncbi_dataset/fetch.txt
+datasets rehydrate --gzip --directory ncbi
 ```
 
 ### 删除过时的基因组
@@ -170,17 +173,55 @@ cat GCA.exists.md5 GCA-updates.md5 | sort | uniq > GCA.check.md5
 diff GCA.md5 GCA.check.md5
 ```
 
-### makeblastdb
+### 格式化基因组
 
 ```shell
+#获取所有fna文件路径
+find /home/bpool/storage/eukaryotes_genome/fungi/GCA -type f -name "*.fna" > GCA.list
+
+#更新基因组获取GCA-updates
+find /home/bpool/storage/eukaryotes_genome/fungi/GCA-updates -type f -name "*.fna" > GCA-updates.list
+
+#批量格式化基因组
+sbatch makeblastdb.slurm
+
+#将格式化好的基因组转移到GCA完成基因组更新
+mv GCA-updates/* GCA/
 ```
 
-
-
-### 文件重命名
+### makeblastdb.slurm
 
 ```shell
-awk -F'[/.]' '{print "mv "$3".fna "$3"_"$4".fna"}' ../ncbi/md5sum.exists.txt | bash
+#!/bin/bash
+#SBATCH --job-name=makeblastdb
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=5
+#SBATCH --output=slurm-%A_%a.out
+#SBATCH --array=1-21434%10000
+
+CATEGORYDIR="/home/bpool/storage/eukaryotes_genome/fungi"
+LOGDIR="$CATEGORYDIR/logs"
+GENOME_DIR="$CATEGORYDIR/GCA"
+mapfile -t GENOME_LIST < $CATEGORYDIR/GCA.list
+
+# 获取任务ID
+TASK_ID=$SLURM_ARRAY_TASK_ID
+GENOME_FILE=${GENOME_LIST[$TASK_ID - 1]}
+
+#检查文件是否存在
+if [ ! -f "$GENOME_FILE" ]; then
+   echo "Error: Genome file $GENOME_FILE not found"
+   exit 1
+fi
+
+cd $GENOME_DIR
+makeblastdb -in $(basename "$GENOME_FILE") -input_type fasta -title $(basename "$GENOME_FILE" .fna) -dbtype nucl -out $(basename "$GENOME_FILE" .fna) -logfile $LOGDIR/$(basename "$GENOME_FILE" .fna).makeblastdb.log
+echo makeblastdb -in $(basename "$GENOME_FILE") -input_type fasta -title $(basename "$GENOME_FILE" .fna) -dbtype nucl -out $(basename "$GENOME_FILE" .fna) -logfile $LOGDIR/$(basename "$GENOME_FILE" .fna).makeblastdb.log  done! >> $LOGDIR/$(basename "$GENOME_FILE" .fna).makeblastdb.log
+seqkit fx2tab -l -n -i $(basename "$GENOME_FILE") > $(basename "$GENOME_FILE").len
+echo "seqkit fx2tab -l -n -i $(basename "$GENOME_FILE") > $(basename "$GENOME_FILE").len done!" >> $LOGDIR/$(basename "$GENOME_FILE" .fna).makeblastdb.log
+samtools faidx $(basename "$GENOME_FILE")
+echo "samtools faidx $(basename "$GENOME_FILE") done!" >> $LOGDIR/$(basename "$GENOME_FILE" .fna).makeblastdb.log
 ```
 
 ## 3. Others基因组下载
@@ -197,15 +238,5 @@ awk 'NR==FNR{a[$0]; next} !($0 in a)' exclude.gca_accession.txt  metazoa.gca_acc
 #metazoa-chordata-others
 cat actinopteri.gca_accession.txt aves.gca_accession.txt mammalia.gca_accession.txt > exclude.gca_accession.txt
 awk 'NR==FNR{a[$0]; next} !($0 in a)' exclude.gca_accession.txt chordata.gca_accession.txt > chordata-others.gca_accession.txt
-```
-
-
-
-```shell
-mv ncbi/ncbi_dataset/data/*.fna GCA-update/
-cat fungi.gca_accession.txt metazoa.gca_accession.txt viridiplantae.gca_accession.txt > exclude.gca_accession.txt
-awk 'NR==FNR{a[$0]; next} !($0 in a)' b.txt a.txt > unique_to_a.txt
-awk -F'[ /._]' '{print $1"  "$4"_"$5"_"$6".fna"}' GCA-update1.md5
-awk -F'[ /]' '{print $1,$6}' ncbi/md5sum.update.txt > GCA-update.md5
 ```
 
