@@ -59,13 +59,17 @@ Now：1491
 ### 获取name2id
 
 ```shell
-datasets summary genome taxon 'fungi' --reference --as-json-lines | dataformat tsv genome --fields assminfo-paired-assm-accession,current-accession,organism-name | sed -e 's/^[[:space:]]*//' -e 's/GCF_[^[:space:]]*[[:space:]]*//g' | awk 'BEGIN {FS=OFS="\t"} NR==1 {print "Name\tGCA"; next} ($1 ~ /^GCA/) {gsub("\.", "_", $1);gsub(" ", "_", $2); print $2 "\t" $1}' > name2id.txt
+#下载基因组信息
+datasets summary genome taxon 'fungi' --reference --as-json-lines > fungi.json
+
+#提取name2id
+cat fungi.json | dataformat tsv genome --fields assminfo-paired-assm-accession,current-accession,organism-name | sed -e 's/^[[:space:]]*//' -e 's/GCF_[^[:space:]]*[[:space:]]*//g' | awk 'BEGIN {FS=OFS="\t"} NR==1 {print "Name\tGCA"; next} ($1 ~ /^GCA/) {gsub("\.", "_", $1);gsub(" ", "_", $2); print $2 "\t" $1}' > name2id.txt
 ```
 
 ### 提取GCA accession
 
 ```shell
-awk -F'\t' 'NR > 1 {print $2}' name2id.txt > gca_accession.txt
+awk -F'\t' 'NR > 1 {split($2, a, "_"); print a[1]"_"a[2]"."a[3]}' name2id.txt > gca_accession.txt
 ```
 
 ### 下载基因组
@@ -114,7 +118,7 @@ mv ncbi/ncbi_dataset/fetch.filters.txt  ncbi/ncbi_dataset/fetch.txt
 sed -i 's/data\/GCA_[^/]*\//data\//g' ncbi/ncbi_dataset/fetch.txt
 datasets rehydrate --gzip --directory ncbi
 #批量解压
-ls ncbi/ncbi_dataset/data/*.gz | xargs -I {} echo gunzip {} | parallel -j 10
+find ncbi/ncbi_dataset/data/ -name "*.gz" | xargs -I {} echo gunzip {} | parallel -j 10
 #将下载好的基因组移动到GCA-updates
 mkdir GCA-updates
 mv ncbi/ncbi_dataset/data/*.fna GCA-updates/
